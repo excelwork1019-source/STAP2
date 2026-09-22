@@ -3331,8 +3331,7 @@ function buildStats(){
   var el=document.getElementById('stats-out');
   el.innerHTML='';
   if(!matches.length){el.innerHTML='<div class="empty">試合データなし</div>';return;}
-  var myName=myTeam.name||'自チーム';
-  // 全試合の勝敗集計
+  // 全試合の勝敗集計（全ペア合算）
   var totalW=0,totalL=0;
   matches.forEach(function(m){
     if(!m.done)return;
@@ -3340,24 +3339,52 @@ function buildStats(){
   });
   var totalRate=totalW+totalL>0?Math.round(totalW/(totalW+totalL)*100):0;
   var html='';
-  // ① 全体勝敗
   html+='<div class="anwrap" style="margin-bottom:6px;">';
   html+='<div class="antitle">📊 対戦統計</div>';
-  html+='<div class="ansec"><div class="ansh">① 全体勝敗</div>';
+
+  // ① 全体成績（全ペア合算）
+  html+='<div class="ansec"><div class="ansh">① 全体成績（記録した全ペア合算）</div>';
   html+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px;">';
   html+=makePie([{label:'勝ち',value:totalW,color:'#2ecc71'},{label:'負け',value:totalL,color:'#e74c3c'}],100);
   html+='<div style="font-size:12px;font-weight:bold;">'+totalW+'勝'+totalL+'敗　勝率'+totalRate+'%</div>';
   html+='</div></div>';
 
-  // ② 相手チーム別対戦成績
-  html+='<div class="ansec"><div class="ansh">② 相手チーム別対戦成績</div>';
+  // ペアごとにグルーピング（xname＝記録した本人側のチーム名）
+  var pairMap={};
+  matches.forEach(function(m){
+    if(!m.done)return;
+    var pname=m.xname||'（チーム名未設定）';
+    if(!pairMap[pname])pairMap[pname]={w:0,l:0,matches:[]};
+    if(m.totX>m.totY)pairMap[pname].w++;else pairMap[pname].l++;
+    pairMap[pname].matches.push(m);
+  });
+  var pairNames=Object.keys(pairMap);
+  var multiPair=pairNames.length>1;
+
+  // ② ペア別成績（複数ペアのデータが混在している場合のみ表示）
+  if(multiPair){
+    html+='<div class="ansec"><div class="ansh">② ペア別成績</div>';
+    var pairRows=pairNames.map(function(pname){
+      var d=pairMap[pname];
+      var rate=Math.round(d.w/(d.w+d.l)*100);
+      return[pname,d.w+'勝'+d.l+'敗',rate+'%',bar(rate)];
+    }).sort(function(a,b){return parseInt(b[2])-parseInt(a[2]);});
+    html+=mkTbl(['ペア（チーム名）','通算','勝率','グラフ'],pairRows);
+    html+='</div>';
+  }
+
+  // ③ 相手チーム別対戦成績（複数ペアの場合はペア内訳つき）
+  html+='<div class="ansec"><div class="ansh">'+(multiPair?'③':'②')+' 相手チーム別対戦成績</div>';
   var opMap={};
   matches.forEach(function(m){
     if(!m.done)return;
     var oname=m.yname||'相手チーム';
-    if(!opMap[oname])opMap[oname]={w:0,l:0,matches:[]};
+    if(!opMap[oname])opMap[oname]={w:0,l:0,matches:[],byPair:{}};
     if(m.totX>m.totY)opMap[oname].w++;else opMap[oname].l++;
     opMap[oname].matches.push(m);
+    var pname=m.xname||'（チーム名未設定）';
+    if(!opMap[oname].byPair[pname])opMap[oname].byPair[pname]={w:0,l:0};
+    if(m.totX>m.totY)opMap[oname].byPair[pname].w++;else opMap[oname].byPair[pname].l++;
   });
   var opRows=[];
   Object.keys(opMap).forEach(function(oname){
@@ -3365,13 +3392,21 @@ function buildStats(){
     var rate=Math.round(d.w/(d.w+d.l)*100);
     var lastM=d.matches[d.matches.length-1];
     var lastResult=lastM.totX>lastM.totY?'<span style="color:#2ecc71;font-weight:bold;">勝</span>':'<span style="color:#e74c3c;font-weight:bold;">負</span>';
-    opRows.push([oname,d.w+'勝'+d.l+'敗',rate+'%',lastResult,lastM.date||'-']);
+    var oCell=oname;
+    if(multiPair){
+      var pairBreak=Object.keys(d.byPair).map(function(pn){
+        var pd=d.byPair[pn];
+        return pn+':'+pd.w+'勝'+pd.l+'敗';
+      }).join('　');
+      oCell='<b>'+oname+'</b><br><span style="font-size:8px;color:#888;">'+pairBreak+'</span>';
+    }
+    opRows.push([oCell,d.w+'勝'+d.l+'敗',rate+'%',lastResult,lastM.date||'-']);
   });
   html+=mkTbl(['相手チーム','通算','勝率','直近','日付'],opRows);
   html+='</div>';
 
-  // ③ 月別勝敗推移
-  html+='<div class="ansec"><div class="ansh">③ 月別勝敗</div>';
+  // 月別勝敗推移
+  html+='<div class="ansec"><div class="ansh">'+(multiPair?'④':'③')+' 月別勝敗</div>';
   var monthMap={};
   matches.forEach(function(m){
     if(!m.done||!m.date)return;
@@ -3389,8 +3424,8 @@ function buildStats(){
   else html+='<p style="font-size:9px;color:#aaa;">データなし</p>';
   html+='</div>';
 
-  // ④ 直近5試合
-  html+='<div class="ansec"><div class="ansh">④ 直近5試合</div>';
+  // 直近5試合（複数ペアの場合はペア名も表示）
+  html+='<div class="ansec"><div class="ansh">'+(multiPair?'⑤':'④')+' 直近5試合</div>';
   var recent=matches.filter(function(m){return m.done;}).slice().sort(function(a,b){
     var da=(a.date||'')+(a.time!=null&&a.time!==''?'T'+a.time:'T99:99');
     var db=(b.date||'')+(b.time!=null&&b.time!==''?'T'+b.time:'T99:99');
@@ -3398,9 +3433,11 @@ function buildStats(){
   }).slice(0,5);
   var recRows=recent.map(function(m){
     var win=m.totX>m.totY;
-    return [m.date||'-',m.yname||'相手',m.totX+'-'+m.totY,'<span style="color:'+(win?'#2ecc71':'#e74c3c')+';font-weight:bold;">'+(win?'勝':'負')+'</span>'];
+    var row=[m.date||'-',m.yname||'相手',m.totX+'-'+m.totY,'<span style="color:'+(win?'#2ecc71':'#e74c3c')+';font-weight:bold;">'+(win?'勝':'負')+'</span>'];
+    if(multiPair)row.splice(1,0,m.xname||'-');
+    return row;
   });
-  html+=mkTbl(['日付','相手','スコア','結果'],recRows);
+  html+=mkTbl(multiPair?['日付','ペア','相手','スコア','結果']:['日付','相手','スコア','結果'],recRows);
   html+='</div></div>';
   el.innerHTML=html;
 }
